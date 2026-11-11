@@ -73,7 +73,7 @@ def read_page():
         qty.first.wait_for(state="visible")
         if not ANY.fullmatch(qty.first.inner_text().strip()):
             qty.first.click()
-            page.get_by_role("option", name=ANY).click()
+            page.locator('li[role="option"]:visible').filter(has_text=ANY).click()
         any_button = page.get_by_role("button", name=re.compile(r"^(?:any\b|任何)", re.I))
         expect(any_button.first).to_be_enabled()
         cards.first.wait_for(state="visible")
