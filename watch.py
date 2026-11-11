@@ -78,28 +78,38 @@ def read_page():
         expect(any_button.first).to_be_enabled()
         cards.first.wait_for(state="visible")
         params = parse_qs(urlparse(page.url).query)
-        if params.get("quantity") != ["0"] or set(params.get("sections", [""])[0].split(",")) != set(map(str, MAP_IDS)):
+        if (params.get("quantity") != ["0"] or params.get("sortBy") != ["NEWPRICE"]
+                or params.get("sortDirection") != ["0"]
+                or set(params.get("sections", [""])[0].split(",")) != set(map(str, MAP_IDS))):
             raise ValueError("The section or quantity filters were lost")
         more = page.get_by_role("button", name=MORE)
+        found, inspected = {}, set()
         for _ in range(150):
+            rows = cards.evaluate_all("""cards => cards.map(c => ({id: c.dataset.listingId,
+                price: c.dataset.price, sold: c.dataset.isSold, text: c.innerText,
+                label: c.getAttribute('aria-label') || ''}))""")
+            if not rows:
+                raise ValueError("StubHub did not return verifiable listings")
+            found.update(qualifying(rows))
+            inspected.update(row["id"] for row in rows)
+            organic = [row for row in rows if row["sold"] != "1" and not
+                       re.search(r"sponsored|已赞助", row["label"] + "\n" + row["text"], re.I)]
+            prices = [Decimal(row["price"].replace("US", "").replace("$", "").replace(",", "")) for row in organic]
+            if prices and prices == sorted(prices) and prices[-1] >= 700:
+                print(f"Verified ascending regular listings from USD {prices[0]} through {prices[-1]}.")
+                return found, len(inspected)
             if not more.is_visible():
-                break
-            previous_count = cards.count()
+                counts = re.search(r"showing\s+([\d,]+)\s+(?:of|out of)\s+([\d,]+)|显示\s*([\d,]+)\s*个[（(]共\s*([\d,]+)\s*个", page.locator("body").inner_text(), re.I)
+                if counts:
+                    shown, total = [int(n.replace(",", "")) for n in counts.groups() if n]
+                    if shown < total or len(inspected) < total:
+                        raise ValueError("The listing count indicates an incomplete page")
+                return found, len(inspected)
             more.click()
-            page.wait_for_function("(arg) => document.querySelectorAll(arg.sel).length > arg.n",
-                                   arg={"sel": CARD, "n": previous_count})
-        else:
-            raise ValueError("Could not finish pagination")
-        counts = re.search(r"(?:showing\s+([\d,]+)\s+(?:of|out of)\s+([\d,]+)|显示\s*([\d,]+)\s*个[（(]共\s*([\d,]+)\s*个)", page.locator("body").inner_text(), re.I)
-        if counts:
-            values = [int(n.replace(",", "")) for n in counts.groups() if n]
-            if values[0] != values[1] or cards.count() < values[0]:
-                raise ValueError("The listing count indicates an incomplete page")
-        rows = cards.evaluate_all("""cards => cards.map(c => ({id: c.dataset.listingId,
-            price: c.dataset.price, sold: c.dataset.isSold, text: c.innerText}))""")
-        if not rows:
-            raise ValueError("StubHub did not return verifiable listings")
-        return qualifying(rows), len(rows)
+            page.wait_for_function("""({sel, seen}) => Array.from(document.querySelectorAll(sel))
+                .some(card => !seen.includes(card.dataset.listingId))""",
+                                   arg={"sel": CARD, "seen": list(inspected)})
+        raise ValueError("Could not finish pagination")
 
 
 def send_mail(subject, body):
