@@ -1,0 +1,59 @@
+name: Ye Glendale ticket watch
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7,22,37,52 * 11-22 11 *'
+
+concurrency:
+  group: ye-glendale-ticket-watch
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  watch:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Stop the schedule after the show starts
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ $(date -u +%s) -ge $(date -ud '2026-11-22 03:30:00 UTC' +%s) ]]; then
+            gh workflow disable watch.yml --repo "$GITHUB_REPOSITORY"
+            echo 'active=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'active=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.active == 'true'
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Install the browser client
+        if: steps.gate.outputs.active == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ye-watch"
+          "$RUNNER_TEMP/ye-watch/bin/pip" install --disable-pip-version-check 'playwright==1.58.0'
+      - name: Check live listings and send alerts
+        id: check
+        if: steps.gate.outputs.active == 'true'
+        env:
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: '"$RUNNER_TEMP/ye-watch/bin/python" watch.py'
+      - name: Preserve alert history
+        if: always() && steps.check.outcome != 'skipped'
+        run: |
+          if test -f monitor-state.json; then
+            git add -- monitor-state.json
+            if ! git diff --cached --quiet; then
+              git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m 'Save ticket alert state'
+              git pull --rebase
+              git push
+            fi
+          fi
