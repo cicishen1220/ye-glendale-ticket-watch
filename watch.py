@@ -21,8 +21,8 @@ STATE = Path("monitor-state.json")
 FEE = re.compile(r"^(?:(?:includes?|including|incl\.?) (?:all )?fees|(?:all )?fees included|含费用)[.!]?$", re.I | re.M)
 CARD = '[role="button"][data-listing-id][data-price]'
 MORE = re.compile(r"^(?:show|load|see|view) more(?: listings| tickets)?$|^显示更多$", re.I)
-QTY = re.compile(r"^(?:\d+ tickets?|any(?: quantity)?|\d+ 张票|任何)\b", re.I)
-ANY = re.compile(r"^any(?: quantity)?$|^任何$", re.I)
+QTY = re.compile(r"^\s*(?:\d+\s+tickets?\b|any\b|\d+\s*[张張](?:门|門)?票|任何|不限|任意)", re.I)
+ANY = re.compile(r"^\s*(?:any(?: quantity)?|任何|不限|任意)\s*$", re.I)
 SECTION_IDS = dict(zip(sorted(SECTIONS), MAP_IDS))
 
 
@@ -75,7 +75,14 @@ def read_view(browser, locale, width):
             go.wait_for(state="hidden")
         qty = page.get_by_role("button", name=QTY).or_(
             page.get_by_role("combobox").filter(has_text=QTY)).filter(visible=True)
-        qty.first.wait_for(state="visible")
+        try:
+            qty.first.wait_for(state="visible", timeout=10000)
+        except Exception:
+            buttons = page.get_by_role("button").or_(page.get_by_role("combobox"))
+            controls = buttons.evaluate_all("""els => els.slice(0,26).map(e =>
+                [e.innerText.slice(0,65), e.getAttribute("aria-label")])""")
+            print(f"{locale} controls: {controls}")
+            raise
         if not ANY.fullmatch(qty.first.inner_text().strip()):
             qty.first.click()
             option = page.locator('li[role="option"]:visible').filter(has_text=ANY)
@@ -142,7 +149,7 @@ def read_page():
     found, inspected, errors = {}, set(), []
     with sync_playwright() as pw:
         browser = pw.chromium.launch(channel="chrome")
-        for locale, width in (("en-US", 1280), ("zh-CN", 850)):
+        for locale, width in (("en-US", 1280), ("zh-CN", 1280)):
             try:
                 items, ids = read_view(browser, locale, width)
             except Exception as exc:
@@ -188,17 +195,6 @@ def run():
         print(f"Live check succeeded: {total} listings, {len(found)} below the threshold.")
         raise RuntimeError("Email is pending. Configure ALERT_EMAIL and GMAIL_APP_PASSWORD to activate alerts.")
     state = json.loads(STATE.read_text()) if STATE.exists() else {"active": {}, "ready": False, "failures": 0}
-    if (os.getenv("GITHUB_RUN_ID") == "43112505924" and not state.get("repair_notice")
-            and "14771731171" not in state["active"]):
-        send_mail("Ye Glendale｜110 区第 38 排两张连座低于 $700",
-                  "11 月 11 日 Glendale 当地时间约 16:43，我在 StubHub 核实这条票单。\n"
-                  "110 区，第 38 排，座位 10、11，两张连座。页面含费单价 $698，订单明细为每张 $697.94。\n"
-                  "这是当时查看到的报价，打开页面可以核对当前价格。票单编号 14771731171。\n"
-                  + section_link(110).replace("quantity=0", "quantity=2"))
-        state["active"]["14771731171"] = 69800
-        state["repair_notice"] = True
-        save(state)
-        print("Email accepted for browser-verified listing 14771731171 at USD 697.94 per ticket.")
     incomplete = None
     try:
         found, total = read_page()
