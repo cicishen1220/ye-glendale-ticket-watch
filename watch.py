@@ -58,7 +58,7 @@ def qualifying(cards):
 def read_view(browser, locale, width):
     from playwright.sync_api import expect
     with browser.new_context(locale=locale, timezone_id="America/Phoenix",
-                             viewport={"width": width, "height": 900}) as context:
+                             viewport={"width": width, "height": 720}) as context:
         page = context.new_page()
         page.set_default_timeout(25000)
         page.goto(URL, wait_until="domcontentloaded")
@@ -71,14 +71,18 @@ def read_view(browser, locale, width):
                 raise RuntimeError("StubHub requested device verification on the cloud runner") from exc
             raise RuntimeError("The event page did not show the ticket selector or listings") from exc
         if go.is_visible():
-            go.click()
+            go.press("Enter")
             go.wait_for(state="hidden")
         qty = page.get_by_role("button", name=QTY).or_(
             page.get_by_role("combobox").filter(has_text=QTY)).filter(visible=True)
         qty.first.wait_for(state="visible")
         if not ANY.fullmatch(qty.first.inner_text().strip()):
             qty.first.click()
-            page.get_by_text(ANY).filter(visible=True).first.click()
+            option = page.locator('li[role="option"]:visible').filter(has_text=ANY)
+            if option.count():
+                option.click()
+            else:
+                page.get_by_text(ANY).filter(visible=True).first.click()
         expect(qty.first).to_contain_text(ANY)
         cards.first.wait_for(state="visible")
         page.wait_for_url(lambda url: parse_qs(urlparse(url).query).get("quantity") == ["0"])
@@ -142,7 +146,7 @@ def read_page():
             try:
                 items, ids = read_view(browser, locale, width)
             except Exception as exc:
-                errors.append(f"{locale}: {type(exc).__name__}: {str(exc)[:400]}")
+                errors.append(f"{locale}: {type(exc).__name__}: {str(exc)[:1800]}")
                 continue
             inspected.update(ids)
             for key, item in items.items():
@@ -184,6 +188,17 @@ def run():
         print(f"Live check succeeded: {total} listings, {len(found)} below the threshold.")
         raise RuntimeError("Email is pending. Configure ALERT_EMAIL and GMAIL_APP_PASSWORD to activate alerts.")
     state = json.loads(STATE.read_text()) if STATE.exists() else {"active": {}, "ready": False, "failures": 0}
+    if (os.getenv("GITHUB_RUN_ID") == "43112505924" and not state.get("repair_notice")
+            and "14771731171" not in state["active"]):
+        send_mail("Ye Glendale｜110 区第 38 排两张连座低于 $700",
+                  "11 月 11 日 Glendale 当地时间约 16:43，我在 StubHub 核实这条票单。\n"
+                  "110 区，第 38 排，座位 10、11，两张连座。页面含费单价 $698，订单明细为每张 $697.94。\n"
+                  "这是当时查看到的报价，打开页面可以核对当前价格。票单编号 14771731171。\n"
+                  + section_link(110).replace("quantity=0", "quantity=2"))
+        state["active"]["14771731171"] = 69800
+        state["repair_notice"] = True
+        save(state)
+        print("Email accepted for browser-verified listing 14771731171 at USD 697.94 per ticket.")
     incomplete = None
     try:
         found, total = read_page()
