@@ -2,7 +2,7 @@ name: Ye Glendale ticket watch
 on:
   workflow_dispatch:
   schedule:
-    - cron: '7,22,37,52 * 11-22 11 *'
+    - cron: '7,22,37,52 * * * *'
 
 concurrency:
   group: ye-glendale-ticket-watch
