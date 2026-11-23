@@ -1,8 +1,6 @@
 name: Ye Glendale ticket watch
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '7,22,37,52 * * * *'
 
 concurrency:
   group: ye-glendale-ticket-watch
@@ -12,7 +10,8 @@ permissions: {}
 
 jobs:
   watch:
-    if: github.event.repository.private == false
+    # Cancelled at the owner's request.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
